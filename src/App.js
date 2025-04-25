@@ -149,17 +149,23 @@ function LeafletMap({ onShowTrend }) {
 // Helper functions
 const getStatusFromDistance = (distance) => {
   if (distance === null || distance === undefined) return "unknown";
-  if (distance > 100) return "normal";
-  if (distance > 70) return "warning";
+  // 0-3cm: Safe
+  if (distance <= 3) return "normal";
+  // 3.1-6cm: Warning
+  if (distance <= 6) return "warning";
+  // 6.1cm+: Danger
   return "danger";
 };
 
 // New helper function to determine status from water level percentage
 const getStatusFromWaterLevel = (waterLevel) => {
   if (waterLevel === null || waterLevel === undefined) return "unknown";
-  if (waterLevel < 30) return "normal";
-  if (waterLevel < 80) return "warning";
-  return "danger";
+  
+  // Convert waterLevel percentage to distance
+  // Assuming MAX_DISTANCE is 20cm
+  const distance = (waterLevel / 100) * 20;
+  
+  return getStatusFromDistance(distance);
 };
 
 const getStatusText = (status) => {
@@ -323,7 +329,7 @@ function WaterLevelTrendModal({ show, onClose, data, options, currentWaterLevel,
             </div>
             <div className="chart-value">
               <div className={`dot status-${alertStatus}`}></div>
-              {currentWaterLevel !== null ? `${(currentWaterLevel / 10 * 100).toFixed(1)}cm` : 'No data'}
+              {currentWaterLevel !== null ? `${((currentWaterLevel / 100) * 20).toFixed(1)}cm` : 'No data'}
             </div>
           </div>
         )}
@@ -438,8 +444,8 @@ function App() {
       {
         label: 'Waterlevel',
         data: threeHourFilteredReadings.slice(0, 8).map(record => {
-          // Convert percentage to cm for display
-          return (record.waterLevel / 10 * 100).toFixed(1);
+          // Convert percentage to cm (percentage of MAX_DISTANCE which is 20cm)
+          return ((record.waterLevel / 100) * 20).toFixed(1);
         }).reverse(),
         fill: false,
         backgroundColor: 'rgba(37, 99, 235, 0.2)',
@@ -493,7 +499,7 @@ function App() {
               const date = new Date(record.timestamp);
               return [
                 `${format(date, 'HH:mm')}`,
-                `Waterlevel: ${(record.waterLevel / 10 * 100).toFixed(1)}cm`
+                `Waterlevel: ${((record.waterLevel / 100) * 20).toFixed(1)}cm`
               ];
             }
             return '';
@@ -503,7 +509,8 @@ function App() {
     },
     scales: {
       y: {
-        beginAtZero: false,
+        beginAtZero: true,
+        max: 20, // Max distance is 20cm
         title: {
           display: true,
           text: 'Values'
@@ -653,7 +660,7 @@ function App() {
                                 <div className={`reading-value ${status}`}>
                                   {trend === 'up' && <div className="arrow arrow-up"></div>}
                                   {trend === 'down' && <div className="arrow arrow-down"></div>}
-                                  {(reading.waterLevel / 10 * 100).toFixed(1)}cm
+                                  {((reading.waterLevel / 100) * 20).toFixed(1)}cm
                                 </div>
                               </td>
                             );

@@ -15,13 +15,13 @@
 #define BUZZER_PIN 8
 
 // Constants for water level calculation
-#define MAX_DISTANCE 15      // Maximum distance to measure (cm)
+#define MAX_DISTANCE 20      // Maximum distance to measure (cm)
 #define MIN_WATER_LEVEL 0    // Minimum water level value when sensor reads MAX_DISTANCE
 
-// Thresholds for alerts (now in water level percentage)
-#define SAFE_LEVEL 30        // <30% = safe (green)
-#define WARNING_LEVEL 60     // 30-60% = warning (yellow)
-#define DANGER_LEVEL 90      // >90% = danger (red)
+// Thresholds for alerts (water level in cm)
+#define SAFE_THRESHOLD 3.0        // 0-3cm = safe (green)
+#define WARNING_THRESHOLD 6.0     // 3.1-6cm = warning (yellow)
+// Above 6.1cm = danger (red)
 
 // Variables
 long duration;
@@ -107,16 +107,16 @@ void loop() {
   updateDisplay(waterLevel);
   
   // Update LEDs and buzzer based on water level
-  updateIndicators(waterLevel);
+  updateIndicators(distance);
   
   // Control buzzer intensity/pattern based on water level
-  updateBuzzer(waterLevel);
+  updateBuzzer(distance);
   
   // Check if it's time to send data to ESP8266
   unsigned long currentMillis = millis();
   
   // Send if interval has passed OR water level has changed to warning/danger level
-  if (currentMillis - lastSendTime >= sendInterval || waterLevel >= WARNING_LEVEL) {
+  if (currentMillis - lastSendTime >= sendInterval || waterLevel >= WARNING_THRESHOLD) {
     lastSendTime = currentMillis;
     
     // Send water level and raw distance to ESP8266
@@ -177,11 +177,11 @@ void updateDisplay(int level) {
   
   // Set status text based on water level
   lcd.setCursor(11, 1);
-  if (level >= DANGER_LEVEL) {
+  if (level >= WARNING_THRESHOLD) {
     lcd.print("ALERT");
     statusText = "Alert";
   } 
-  else if (level >= WARNING_LEVEL && level < DANGER_LEVEL) {
+  else if (level >= WARNING_THRESHOLD) {
     lcd.print("WARN ");
     statusText = "Warning";
   }
@@ -191,21 +191,21 @@ void updateDisplay(int level) {
   }
 }
 
-void updateIndicators(int level) {
-  // Safe level (green light)
-  if (level < WARNING_LEVEL) {
+void updateIndicators(int distance) {
+  // Safe level (green light) - 0 to 3cm
+  if (distance <= SAFE_THRESHOLD) {
     digitalWrite(GREEN_LED, HIGH);
     digitalWrite(YELLOW_LED, LOW);
     digitalWrite(RED_LED, LOW);
   } 
-  // Warning level (yellow light)
-  else if (level >= WARNING_LEVEL && level < DANGER_LEVEL) {
+  // Warning level (yellow light) - 3.1 to 6cm
+  else if (distance > SAFE_THRESHOLD && distance <= WARNING_THRESHOLD) {
     digitalWrite(GREEN_LED, LOW);
     digitalWrite(YELLOW_LED, HIGH);
     digitalWrite(RED_LED, LOW);
   }
-  // Alert level (red light)
-  else if (level >= DANGER_LEVEL) {
+  // Alert level (red light) - 6.1cm and up
+  else {
     digitalWrite(GREEN_LED, LOW);
     digitalWrite(YELLOW_LED, LOW);
     digitalWrite(RED_LED, HIGH);
@@ -213,19 +213,19 @@ void updateIndicators(int level) {
 }
 
 // New function to control buzzer based on water level
-void updateBuzzer(int level) {
+void updateBuzzer(int distance) {
   unsigned long currentMillis = millis();
   
-  // Turn off buzzer for safe levels
-  if (level < WARNING_LEVEL) {
+  // Turn off buzzer for safe levels (0-3cm)
+  if (distance <= SAFE_THRESHOLD) {
     digitalWrite(BUZZER_PIN, LOW);
     return;
   }
   
-  // For warning levels, beep with increasing frequency as level rises
-  if (level >= WARNING_LEVEL && level < DANGER_LEVEL) {
+  // For warning levels (3.1-6cm), beep with increasing frequency as level rises
+  if (distance > SAFE_THRESHOLD && distance <= WARNING_THRESHOLD) {
     // Calculate interval - gets shorter as level increases
-    buzzerInterval = map(level, WARNING_LEVEL, DANGER_LEVEL, 1000, 200);
+    buzzerInterval = map(distance, SAFE_THRESHOLD, WARNING_THRESHOLD, 1000, 200);
     
     // Create intermittent beeping pattern
     if (currentMillis - previousBuzzerMillis >= buzzerInterval) {
@@ -235,14 +235,14 @@ void updateBuzzer(int level) {
     }
   }
   
-  // For danger levels, constant or rapid beeping
-  if (level >= DANGER_LEVEL) {
-    // For extreme danger levels (>95%), constant sound
-    if (level > 95) {
+  // For danger levels (>6cm), constant or rapid beeping
+  if (distance > WARNING_THRESHOLD) {
+    // For extreme danger levels (>15cm), constant sound
+    if (distance > 15) {
       digitalWrite(BUZZER_PIN, HIGH);
     } else {
       // Very rapid beeping for high danger
-      buzzerInterval = map(level, DANGER_LEVEL, 100, 200, 50);
+      buzzerInterval = map(distance, WARNING_THRESHOLD, 15, 200, 50);
       
       if (currentMillis - previousBuzzerMillis >= buzzerInterval) {
         previousBuzzerMillis = currentMillis;
