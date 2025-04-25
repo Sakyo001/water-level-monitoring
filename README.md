@@ -1,70 +1,90 @@
-# Getting Started with Create React App
+# Water Level Monitoring System
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A complete system for monitoring water levels using an ultrasonic sensor, Arduino, ESP8266, and a React web application with Firebase integration.
 
-## Available Scripts
+## Project Structure
 
-In the project directory, you can run:
+- `arduino-code/` - Contains Arduino and ESP8266 code
+  - `UltrasonicSensor_Arduino.ino` - Code for Arduino to read ultrasonic sensor
+  - `ESP8266_Firebase_Uploader.ino` - Code for ESP8266 to upload data to Firebase
+  - `secrets.h` - Your private WiFi and Firebase credentials (not included in repo)
+  - `secrets_example.h` - Example template for secrets.h
+- `src/` - React web application source code
+  - `App.js` - Main React application
+  - `firebase.js` - Firebase integration
+  - Other React components and styles
 
-### `npm start`
+## Setup Instructions
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### Arduino Setup
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+1. Open `arduino-code/UltrasonicSensor_Arduino.ino` in Arduino IDE
+2. Upload to your Arduino board
 
-### `npm test`
+### ESP8266 Setup
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. Copy `arduino-code/secrets_example.h` to `arduino-code/secrets.h`
+2. Edit `secrets.h` and add your WiFi and Firebase credentials:
+   ```cpp
+   #define WIFI_SSID "YourWiFiName"
+   #define WIFI_PASSWORD "YourWiFiPassword"
+   #define FIREBASE_HOST "your-project-id.firebaseio.com"
+   #define FIREBASE_AUTH "your-firebase-database-secret"
+   ```
+3. Open `arduino-code/ESP8266_Firebase_Uploader.ino` in Arduino IDE
+4. Install required libraries:
+   - FirebaseESP8266
+   - NTPClient
+   - ESP8266WiFi
+5. Upload to your ESP8266 board
 
-### `npm run build`
+### Web Application Setup
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+1. Copy `.env.example` to `.env`
+2. Update `.env` with your Firebase configuration
+3. Install dependencies:
+   ```
+   npm install
+   ```
+4. Start development server:
+   ```
+   npm start
+   ```
+5. Build for production:
+   ```
+   npm run build
+   ```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Wiring
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+### Arduino to Ultrasonic Sensor
+- Trig Pin: 9
+- Echo Pin: 10
 
-### `npm run eject`
+### Arduino to ESP8266
+- Arduino TX -> ESP8266 RX
+- Arduino RX -> ESP8266 TX
+- Arduino 5V -> ESP8266 Vin
+- Arduino GND -> ESP8266 GND
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Features
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+- Real-time water level monitoring
+- Historical data stored in Firebase
+- Water level trend visualization
+- Safety recommendations based on water level
+- Responsive web interface
+- Map integration showing monitoring location
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## Contributing
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## Learn More
+## Important Notes
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- Never commit your `secrets.h` or `.env` files to the repository
+- They contain sensitive information and are included in `.gitignore`
