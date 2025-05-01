@@ -8,14 +8,14 @@ import { getDatabase, ref, onValue, push, set, get, query, orderByChild, limitTo
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "AIzaSyC-rk_aYFLqEdO7znZFELh4-t0c0bYa35Q",
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "water-level-monitoring-new.firebaseapp.com",
-  databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL || "https://water-level-monitoring-new-default-rtdb.firebaseio.com",
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "water-level-monitoring-new",
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "water-level-monitoring-new.firebasestorage.app",
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "136611538706",
-  appId: process.env.REACT_APP_FIREBASE_APP_ID || "1:136611538706:web:15bf8a25ecac254d03b5cb",
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || "G-5VJGZSNZCX"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY || "AIzaSyCn78CVEM5Q26Bi-8kFTWyHNqMRQlS9m7I",
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN || "water-level-3.firebaseapp.com",
+  databaseURL: process.env.REACT_APP_FIREBASE_DATABASE_URL || "https://water-level-3-default-rtdb.firebaseio.com",
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID || "water-level-3",
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET || "water-level-3.firebasestorage.app",
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID || "939429097460",
+  appId: process.env.REACT_APP_FIREBASE_APP_ID || "1:939429097460:web:deaad210012074bc7953a1",
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID || "G-6WS8QWLBLR"
 };
 
 // Initialize Firebase

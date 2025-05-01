@@ -552,9 +552,16 @@ function App() {
 
   // Subscribe to water level updates from Firebase with smooth updates and increased debounce
   useEffect(() => {
+    console.log('Setting up Firebase subscription to new Realtime Database: water-level-3');
+    
     // Create smooth state updater with stronger debouncing
     const updateDataSmoothly = (data) => {
-      if (!data || data.length === 0) return;
+      if (!data || data.length === 0) {
+        console.log('No data received from Firebase');
+        return;
+      }
+      
+      console.log(`Received ${data.length} readings from Firebase`);
       
       // Only update if we're not currently showing the modal or historical view
       // This prevents unnecessary re-renders while viewing the chart
@@ -563,6 +570,7 @@ function App() {
         const sortedData = [...data].sort((a, b) => b.timestamp - a.timestamp);
         const latestReading = sortedData[0];
         if (latestReading) {
+          console.log('Latest reading:', latestReading);
           setCurrentWaterLevel(prevLevel => {
             if (prevLevel !== latestReading.waterLevel) {
               return latestReading.waterLevel;
@@ -595,6 +603,7 @@ function App() {
         // Only update if the water level actually changed
         setCurrentWaterLevel(prevLevel => {
           if (prevLevel !== latestReading.waterLevel) {
+            console.log(`Water level updated: ${latestReading.waterLevel}`);
             return latestReading.waterLevel;
           }
           return prevLevel;
@@ -604,6 +613,7 @@ function App() {
         const newStatus = getStatusFromWaterLevel(latestReading.waterLevel);
         setAlertStatus(prevStatus => {
           if (prevStatus !== newStatus) {
+            console.log(`Alert status changed: ${prevStatus} -> ${newStatus}`);
             // Update recommendations and causes when status changes
             setSafetyRecommendations(getRandomSafetyRecommendations(newStatus));
             setPotentialCauses(getRandomPotentialCauses(newStatus));
@@ -621,9 +631,11 @@ function App() {
     };
 
     // Subscribe to regular water level updates
+    console.log('Subscribing to water level updates...');
     const unsubscribe = subscribeToWaterLevelUpdates(updateDataSmoothly);
     
     // Subscribe to minute-by-minute data specifically for the graph
+    console.log('Subscribing to minute-by-minute data...');
     const unsubscribeMinuteData = subscribeToMinuteByMinuteData((data) => {
       console.log(`Received ${data.length} minute-by-minute data points`);
       
@@ -636,6 +648,7 @@ function App() {
     });
     
     return () => {
+      console.log('Unsubscribing from Firebase');
       unsubscribe();
       unsubscribeMinuteData();
     };
@@ -651,7 +664,7 @@ function App() {
       try {
         // Check if we already have a reading within the last 5 minutes
         const now = new Date();
-        logTimestamp("Recording at", now.getTime());
+        logTimestamp("Recording historical data at", now.getTime());
         
         // Record the current water level to the minute-by-minute table
         const result = await recordMinuteByMinuteData({
@@ -662,21 +675,29 @@ function App() {
         });
         
         if (result) {
-          console.log("Successfully recorded 5-minute interval data point");
+          console.log("Successfully recorded 5-minute interval data point to the new Firebase database");
+        } else {
+          console.error("Failed to record 5-minute interval data point");
         }
       } catch (error) {
         console.error("Error recording 5-minute interval data point:", error);
       }
     };
 
+    console.log("Setting up historical data recorder with current water level:", currentWaterLevel);
+    
     // Record a point immediately
     recordHistoricalDataPoint();
     
     // Set up an interval to record data points every 5 minutes
     const intervalId = setInterval(recordHistoricalDataPoint, 5 * 60 * 1000);
+    console.log("Historical data recorder interval set up");
     
     // Clean up the interval when component unmounts
-    return () => clearInterval(intervalId);
+    return () => {
+      console.log("Cleaning up historical data recorder");
+      clearInterval(intervalId);
+    };
   }, [currentWaterLevel]);
   
   // Debug: log the number of minute-by-minute data points when it changes
