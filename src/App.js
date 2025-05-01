@@ -293,11 +293,11 @@ const getStatusFromWaterLevel = (waterLevel) => {
 const getStatusText = (status) => {
   switch (status) {
     case "normal":
-      return "Normal";
+      return "Safe";
     case "warning":
       return "Warning";
     case "danger":
-      return "Danger";
+      return "Critical";
     default:
       return "Unknown";
   }
@@ -1267,12 +1267,9 @@ function App() {
               {/* Status boxes */}
               <div className="sidebar-section">
                 <div className={`status-box ${alertStatus}`}>
-                  <div className="status-title">Current Water Level Status</div>
+                  <div className="status-title">Current Level Status (in cm)</div>
                   <div className="status-value">
-                    {alertStatus === 'normal' && 'Normal'}
-                    {alertStatus === 'warning' && 'Warning'}
-                    {alertStatus === 'danger' && 'Danger'}
-                    {alertStatus === 'unknown' && 'Unknown'}
+                    {currentWaterLevel !== null ? `${Math.min(((currentWaterLevel / 100) * 8).toFixed(1), 8)}cm` : 'Unknown'}
                   </div>
                 </div>
 
@@ -1280,8 +1277,8 @@ function App() {
                   <div className="status-title">Alert Status</div>
                   <div className="status-value">
                     {alertStatus === 'normal' && 'Safe'}
-                    {alertStatus === 'warning' && 'Prepare for possible evacuation'}
-                    {alertStatus === 'danger' && 'Evacuate immediately'}
+                    {alertStatus === 'warning' && 'Warning'}
+                    {alertStatus === 'danger' && 'Critical'}
                     {alertStatus === 'unknown' && 'No data available'}
                   </div>
                 </div>
