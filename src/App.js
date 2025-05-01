@@ -500,12 +500,55 @@ function App() {
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   
+  // Add new state for cached time labels
+  const [timeLabels, setTimeLabels] = useState([]);
+  
   // State for randomized recommendations and causes
   const [safetyRecommendations, setSafetyRecommendations] = useState([]);
   const [potentialCauses, setPotentialCauses] = useState([]);
 
   // Make setShowHistorical available globally for the modal
   window.showHistoricalView = () => setShowHistorical(true);
+
+  // Generate time labels when component mounts, modal is opened, or current water level changes
+  // This ensures that the newest data is always on the right of the chart
+  useEffect(() => {
+    // Function to create timestamps for the last 6 hours at 5-minute intervals
+    const generateTimeLabels = () => {
+      const labels = [];
+      const now = new Date();
+      
+      // Start from 6 hours ago (good timeframe for 5-minute data)
+      const startTime = new Date(now);
+      startTime.setHours(now.getHours() - 6);
+      
+      // Round to nearest 5 minutes
+      startTime.setMinutes(Math.floor(startTime.getMinutes() / 5) * 5);
+      startTime.setSeconds(0);
+      startTime.setMilliseconds(0);
+      
+      // Order from oldest (6 hours ago) to newest (now) so recent data is on the right
+      for (let i = 0; i < 72; i++) {
+        const timeLabel = new Date(startTime);
+        timeLabel.setMinutes(timeLabel.getMinutes() + (i * 5));
+        labels.push({
+          time: timeLabel,
+          formatted: format(timeLabel, 'HH:mm'),
+          timestamp: timeLabel.getTime()
+        });
+      }
+      
+      // Sort labels to ensure they're in chronological order (oldest to newest)
+      return labels.sort((a, b) => a.timestamp - b.timestamp);
+    };
+
+    // Generate time labels when component mounts, modal is opened, or current water level changes
+    // This ensures that the newest data is always on the right of the chart
+    if (timeLabels.length === 0 || showModal) {
+      console.log("Regenerating time labels");
+      setTimeLabels(generateTimeLabels());
+    }
+  }, [timeLabels.length, showModal, currentWaterLevel]);
 
   // Subscribe to water level updates from Firebase with smooth updates and increased debounce
   useEffect(() => {
@@ -709,47 +752,20 @@ function App() {
   // Apply the filter before passing to formatHistoricalDataForTable
   const fiveMinFilteredReadings = filterFiveMinuteReadings(effectiveWaterLevelHistory);
   
-  // Function to create timestamps for the last 6 hours at 5-minute intervals
-  const generateTimeLabels = () => {
-    const labels = [];
-    const now = new Date();
-    
-    // Start from 6 hours ago (good timeframe for 5-minute data)
-    const startTime = new Date(now);
-    startTime.setHours(now.getHours() - 6);
-    
-    // Round to nearest 5 minutes
-    startTime.setMinutes(Math.floor(startTime.getMinutes() / 5) * 5);
-    startTime.setSeconds(0);
-    startTime.setMilliseconds(0);
-    
-    // Generate 72 labels (6 hours * 12 intervals per hour)
-    for (let i = 0; i < 72; i++) {
-      const timeLabel = new Date(startTime);
-      timeLabel.setMinutes(timeLabel.getMinutes() + (i * 5));
-      labels.push({
-        time: timeLabel,
-        formatted: format(timeLabel, 'HH:mm'),
-        timestamp: timeLabel.getTime()
-      });
-    }
-    
-    return labels;
-  };
-  
-  // Generate time labels for X-axis
-  const timeLabels = generateTimeLabels();
-  
   // Create a simplified dataset directly from minuteByMinuteHistory
   const createChartDataPoints = () => {
+    // Exit early if we don't have time labels yet
+    if (timeLabels.length === 0) return [];
+    
     // Get the data points from minuteByMinuteHistory
-    // If no minute-by-minute data, fall back to regular history
-    const dataPoints = [];
+    const dataPoints = Array(timeLabels.length).fill(null); // Initialize with null values
     
     console.log(`Creating chart data points from ${minuteByMinuteHistory.length} readings`);
     
-    // First, create a lookup map of timestamps
+    // Create a map of timestamps to readings
     const readingsMap = {};
+    
+    // Process existing history data first (oldest data)
     minuteByMinuteHistory.forEach(reading => {
       // Convert to 5-minute precision for matching
       const date = new Date(reading.timestamp);
@@ -763,11 +779,12 @@ function App() {
     if (currentWaterLevel !== null) {
       // Create a data point for the current time
       const now = new Date();
-      // Round to the nearest minute for better display
+      // Round to the nearest 5 minutes
+      now.setMinutes(Math.floor(now.getMinutes() / 5) * 5);
       now.setSeconds(0);
       now.setMilliseconds(0);
       
-      // Add the current reading to our map
+      // Add the current reading to our map - this will be the most recent (rightmost) point
       readingsMap[now.getTime()] = {
         waterLevel: currentWaterLevel,
         timestamp: now.getTime(),
@@ -775,61 +792,22 @@ function App() {
       };
     }
     
-    // Map the time labels to data points
+    // Map the time labels to data points - match each label to a reading if available
     timeLabels.forEach((label, index) => {
       // Look for a reading at this exact timestamp
-      let reading = readingsMap[label.timestamp];
-      
-      // If no exact match, find the closest reading in real-time (forward looking)
-      if (!reading && currentWaterLevel !== null) {
-        // Get timestamp for now
-        const now = new Date();
-        
-        // If this label is for a time between the last 5-minute record and now,
-        // interpolate the value
-        if (label.timestamp > timeLabels[0].timestamp && label.time <= now) {
-          // Find the most recent 5-minute reading before this point
-          const mostRecentReadingTime = Math.max(
-            ...Object.keys(readingsMap)
-              .map(Number)
-              .filter(time => time < label.timestamp)
-          );
-          
-          if (!isNaN(mostRecentReadingTime) && mostRecentReadingTime > 0) {
-            const mostRecentReading = readingsMap[mostRecentReadingTime];
-            
-            // Use a simple interpolation for values between most recent reading and current reading
-            const timeDiff = now.getTime() - mostRecentReadingTime;
-            const timePosition = label.timestamp - mostRecentReadingTime;
-            const ratio = timeDiff > 0 ? timePosition / timeDiff : 0;
-            
-            // Interpolate between most recent reading and current water level
-            const interpolatedWaterLevel = mostRecentReading.waterLevel + 
-              (currentWaterLevel - mostRecentReading.waterLevel) * ratio;
-            
-            reading = {
-              waterLevel: interpolatedWaterLevel,
-              timestamp: label.timestamp,
-              id: 'interpolated'
-            };
-          }
-        }
-      }
+      const reading = readingsMap[label.timestamp];
       
       if (reading) {
         // Real data exists for this timestamp
-        dataPoints.push(Math.min(((reading.waterLevel / 100) * 8).toFixed(1), 8));
-      } 
+        dataPoints[index] = Math.min(((reading.waterLevel / 100) * 8).toFixed(1), 8);
+      }
       // If we're testing and have no real data, generate sample data
-      else if (minuteByMinuteHistory.length === 0 && effectiveWaterLevelHistory.length === 0) {
+      else if (minuteByMinuteHistory.length === 0 && Object.keys(readingsMap).length === 0) {
         // Create a sine wave pattern
         const sineValue = Math.sin(index * 0.1) * 3 + 4; // Values between 1-7
-        dataPoints.push(sineValue.toFixed(1));
-      } 
-      // We have some data but not for this specific timestamp
-      else {
-        dataPoints.push(null);
+        dataPoints[index] = sineValue.toFixed(1);
       }
+      // We have some data but not for this specific timestamp - keep as null
     });
     
     return dataPoints;
@@ -853,38 +831,18 @@ function App() {
   
   // Regenerate chart data whenever the water level changes or we're updating
   const dynamicChartData = React.useMemo(() => {
-    // Only regenerate if we have a current water level
-    if (currentWaterLevel === null) {
+    // Only regenerate if we have a current water level and time labels
+    if (currentWaterLevel === null || timeLabels.length === 0) {
       return {
-        labels: timeLabels.map(label => label.formatted),
+        labels: [],
         datasets: [
           {
             label: 'Waterlevel',
-            data: createChartDataPoints(),
+            data: [],
             fill: false,
             backgroundColor: 'rgba(37, 99, 235, 0.2)',
             borderColor: '#2563eb',
             borderWidth: 3,
-            pointBackgroundColor: (context) => {
-              // Use a different color for the current real-time point
-              const index = context.dataIndex;
-              const label = timeLabels[index];
-              
-              // If this is around the current time, use a different color
-              const now = new Date();
-              now.setSeconds(0);
-              now.setMilliseconds(0);
-              
-              const isCurrentTime = Math.abs(label.time - now) < 5 * 60 * 1000; // Within 5 minutes
-              
-              return isCurrentTime ? '#ef4444' : '#2563eb';
-            },
-            pointBorderColor: '#ffffff',
-            pointBorderWidth: 2,
-            pointRadius: 4,
-            pointHoverRadius: 8,
-            tension: 0.2,
-            spanGaps: true, // Connect the line across gaps (null values)
           },
         ],
       };
@@ -903,16 +861,19 @@ function App() {
           pointBackgroundColor: (context) => {
             // Use a different color for the current real-time point
             const index = context.dataIndex;
-            const label = timeLabels[index];
-            
-            // If this is around the current time, use a different color
-            const now = new Date();
-            now.setSeconds(0);
-            now.setMilliseconds(0);
-            
-            const isCurrentTime = Math.abs(label.time - now) < 5 * 60 * 1000; // Within 5 minutes
-            
-            return isCurrentTime ? '#ef4444' : '#2563eb';
+            if (index >= 0 && index < timeLabels.length) {
+              const label = timeLabels[index];
+              
+              // If this is around the current time, use a different color
+              const now = new Date();
+              now.setSeconds(0);
+              now.setMilliseconds(0);
+              
+              const isCurrentTime = Math.abs(label.time - now) < 5 * 60 * 1000; // Within 5 minutes
+              
+              return isCurrentTime ? '#ef4444' : '#2563eb';
+            }
+            return '#2563eb';
           },
           pointBorderColor: '#ffffff',
           pointBorderWidth: 2,
@@ -923,8 +884,8 @@ function App() {
         },
       ],
     };
-  }, [currentWaterLevel, minuteByMinuteHistory, lastChartUpdate, showModal]);
-  
+  }, [currentWaterLevel, minuteByMinuteHistory, lastChartUpdate, showModal, timeLabels]);
+
   // Format historical data for table display by date and hour
   const formatHistoricalDataForTable = () => {
     // Group readings by date first
@@ -1027,6 +988,7 @@ function App() {
         }
       },
       x: {
+        reverse: false, // Ensure that oldest data is on the left, newest on the right
         title: {
           display: true,
           text: 'Time (5-minute intervals)'
@@ -1041,7 +1003,7 @@ function App() {
           minRotation: 45,
           callback: function(index) {
             // Show every 3rd label (every 15 minutes)
-            return index % 3 === 0 ? timeLabels[index].formatted : '';
+            return index % 3 === 0 && index < timeLabels.length ? timeLabels[index].formatted : '';
           }
         }
       }
