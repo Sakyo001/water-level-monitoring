@@ -149,32 +149,42 @@ export const getCurrentWaterLevel = async () => {
 export const subscribeToWaterLevelUpdates = (callback) => {
   console.log('Setting up Firebase subscriptions...');
   
-  // Create a test reading to ensure we can see something
-  const testReading = {
-    id: 'test-reading',
-    waterLevel: 25,
-    distance: 11.25, // 75% of MAX_DISTANCE (15cm)
-    timestamp: Date.now(),
-    deviceId: 'test-device',
-    status: 'Safe'
-  };
-  
-  // Wait 2 seconds before adding a test reading
-  setTimeout(() => {
-    console.log("Adding test reading to ensure UI works:", testReading);
-    callback([testReading]);
+  // Track last update time to prevent too frequent updates
+  let lastUpdateTime = 0;
+  let pendingUpdate = null;
+  let pendingUpdateTimer = null;
+  const UPDATE_DEBOUNCE_TIME = 2000; // 2 seconds debounce
+
+  // Create a debounced callback to prevent flickering
+  const debouncedCallback = (data) => {
+    // Clear any pending update
+    if (pendingUpdateTimer) {
+      clearTimeout(pendingUpdateTimer);
+    }
     
-    // Also add to Firebase for testing
-    set(ref(database, 'waterLevelData/test-' + Date.now()), {
-      waterLevel: testReading.waterLevel,
-      distance: testReading.distance,
-      timestamp: testReading.timestamp,
-      deviceId: testReading.deviceId,
-      status: testReading.status
-    }).catch(error => {
-      console.error("Error writing test data to Firebase:", error);
-    });
-  }, 2000);
+    // Store the latest data
+    pendingUpdate = data;
+    
+    // Only send updates at most once every UPDATE_DEBOUNCE_TIME milliseconds
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateTime;
+    
+    if (timeSinceLastUpdate >= UPDATE_DEBOUNCE_TIME) {
+      // We can update immediately
+      lastUpdateTime = now;
+      callback([...pendingUpdate]);
+      pendingUpdate = null;
+    } else {
+      // Schedule update for later
+      const timeToWait = UPDATE_DEBOUNCE_TIME - timeSinceLastUpdate;
+      pendingUpdateTimer = setTimeout(() => {
+        lastUpdateTime = Date.now();
+        callback([...pendingUpdate]);
+        pendingUpdate = null;
+        pendingUpdateTimer = null;
+      }, timeToWait);
+    }
+  };
   
   // Immediately try to get current water level
   getCurrentWaterLevel().then(currentReading => {
@@ -182,6 +192,7 @@ export const subscribeToWaterLevelUpdates = (callback) => {
       // Fix timestamp if needed
       currentReading.timestamp = fixTimestamp(currentReading.timestamp);
       console.log("Initial current reading (fixed timestamp):", currentReading);
+      lastUpdateTime = Date.now();
       callback([currentReading]);
     }
   });
@@ -231,7 +242,7 @@ export const subscribeToWaterLevelUpdates = (callback) => {
             if (allReadings.length === 0) {
               allReadings = [currentReading];
               console.log("First reading received, sending to app:", allReadings);
-              callback([...allReadings]);
+              debouncedCallback([...allReadings]);
               return;
             }
             
@@ -247,8 +258,8 @@ export const subscribeToWaterLevelUpdates = (callback) => {
             allReadings.sort((a, b) => b.timestamp - a.timestamp);
             
             console.log("Sending updated readings to app:", allReadings.length);
-            // Notify the callback
-            callback([...allReadings]);
+            // Notify the callback with debouncing
+            debouncedCallback([...allReadings]);
           } else {
             console.error("Invalid water level value:", currentReading.waterLevel);
           }
@@ -330,8 +341,8 @@ export const subscribeToWaterLevelUpdates = (callback) => {
           }
           
           console.log("Sending combined readings to app:", allReadings.length);
-          // Notify the callback
-          callback([...allReadings]);
+          // Notify the callback with debouncing
+          debouncedCallback([...allReadings]);
         }
       } catch (error) {
         console.error("Error processing water level history:", error);
@@ -341,11 +352,130 @@ export const subscribeToWaterLevelUpdates = (callback) => {
     }
   });
   
-  // Return a function to unsubscribe from both listeners
+  // Return a function to unsubscribe from both listeners and clear any pending updates
   return () => {
     currentUnsubscribe();
     historyUnsubscribe();
+    if (pendingUpdateTimer) {
+      clearTimeout(pendingUpdateTimer);
+    }
   };
+};
+
+// Function to record minute by minute graph data
+export const recordMinuteByMinuteData = async (reading) => {
+  try {
+    // Ensure we have a valid reading object
+    if (!reading || reading.waterLevel === undefined) {
+      console.error('Error: waterLevel value is required for minute-by-minute data');
+      return false;
+    }
+    
+    // Add timestamp if not present
+    if (!reading.timestamp) {
+      reading.timestamp = Date.now();
+    }
+    
+    // Make sure the timestamp is a number
+    if (typeof reading.timestamp === 'string') {
+      reading.timestamp = parseInt(reading.timestamp, 10);
+    }
+    
+    // Ensure we're storing values as numbers
+    reading.waterLevel = parseFloat(reading.waterLevel);
+    
+    // Set status if not provided
+    if (!reading.status) {
+      reading.status = getStatusFromWaterLevel(reading.waterLevel);
+    }
+    
+    console.log('Recording to minuteByMinuteData:', reading);
+    
+    // Create a timestamp-based key (YYYY-MM-DD-HH-MM)
+    const date = new Date(reading.timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    const timeKey = `${year}-${month}-${day}-${hour}-${minute}`;
+    
+    // Add the reading to minuteByMinuteData with timestamp-based key
+    // This prevents duplicate entries for the same minute
+    await set(ref(database, `minuteByMinuteData/${timeKey}`), {
+      waterLevel: reading.waterLevel,
+      timestamp: reading.timestamp,
+      status: reading.status,
+      deviceId: reading.deviceId || 'unknown'
+    });
+    
+    return true;
+  } catch (error) {
+    console.error('Error recording minute by minute data:', error);
+    return false;
+  }
+};
+
+// Subscribe to minute by minute data
+export const subscribeToMinuteByMinuteData = (callback) => {
+  console.log('Setting up minuteByMinuteData subscription...');
+  
+  // Create a reference to the minuteByMinuteData node
+  const minuteDataRef = ref(database, 'minuteByMinuteData');
+  
+  // Subscribe to the data
+  const unsubscribe = onValue(minuteDataRef, (snapshot) => {
+    console.log('Minute by minute data updated');
+    
+    if (snapshot.exists()) {
+      try {
+        const data = snapshot.val();
+        
+        // Convert the data object to an array
+        const dataArray = Object.keys(data).map(key => {
+          try {
+            const entry = data[key];
+            
+            return {
+              id: key,
+              waterLevel: typeof entry.waterLevel === 'number' ? 
+                entry.waterLevel : parseFloat(entry.waterLevel),
+              timestamp: fixTimestamp(typeof entry.timestamp === 'number' ? 
+                entry.timestamp : parseInt(entry.timestamp, 10)),
+              deviceId: entry.deviceId || 'unknown',
+              status: entry.status || getStatusFromWaterLevel(entry.waterLevel)
+            };
+          } catch (error) {
+            console.error("Error processing minute data entry:", error, data[key]);
+            return null;
+          }
+        }).filter(entry => entry !== null);
+        
+        // Filter out entries with invalid waterLevel
+        const validEntries = dataArray.filter(reading => 
+          reading.waterLevel !== undefined && !isNaN(reading.waterLevel)
+        );
+        
+        console.log(`Found ${validEntries.length} valid readings in minuteByMinuteData`);
+        
+        if (validEntries.length > 0) {
+          // Sort by timestamp (newest first)
+          validEntries.sort((a, b) => b.timestamp - a.timestamp);
+          
+          // Notify the callback
+          callback(validEntries);
+        }
+      } catch (error) {
+        console.error("Error processing minute by minute data:", error);
+      }
+    } else {
+      console.log('No data found in minuteByMinuteData');
+      callback([]);
+    }
+  });
+  
+  // Return a function to unsubscribe
+  return unsubscribe;
 };
 
 export default database;

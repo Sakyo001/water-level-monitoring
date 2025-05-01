@@ -9,10 +9,25 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
-// Include secrets.h for WiFi and Firebase credentials
-// Create a secrets.h file with your actual credentials
-// Use secrets_example.h as a template
-#include "secrets.h"
+// WiFi credentials
+#define WIFI_SSID "macky"
+#define WIFI_PASSWORD "Macky12345678."
+
+// Firebase credentials
+#define FIREBASE_HOST "water-level-monitoring-new-default-rtdb.firebaseio.com"
+#define FIREBASE_AUTH "AIzaSyC-rk_aYFLqEdO7znZFELh4-t0c0bYa35Q"
+
+// Water level thresholds in cm
+#define SAFE_THRESHOLD_CM 3.0
+#define WARNING_THRESHOLD_CM 6.0
+#define CRITICAL_THRESHOLD_CM 10.0
+
+// Maximum distance for water level measurements in cm
+// This must match MAX_DISTANCE_CM in the Arduino code for percentage calculations
+#define MAX_DISTANCE_CM 20.0
+
+// Maximum distance to report to Firebase - values above this will be capped
+#define REPORT_MAX_DISTANCE_CM 8.0
 
 // Status LED
 #define LED_PIN D4  // Built-in LED on most ESP8266 boards
@@ -29,14 +44,16 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org");
 // Status variables
 bool isWifiConnected = false;
 bool isFirebaseConnected = false;
-unsigned long lastUploadTime = 0;
-String lastWaterLevel = "";
-String lastStatus = "";
 String deviceId = "ultrasonic-sensor-1";
+unsigned long lastSuccessfulUpload = 0;
 
 void setup() {
-  // Initialize serial communication with Arduino
+  // Initialize serial communication with Arduino at higher baud rate for faster data transfer
   Serial.begin(9600);
+  Serial.println("\n\nESP8266 Water Level Monitor Starting...");
+  Serial.println("Version: High-Frequency Upload");
+  Serial.println("Maximum distance set to: " + String(MAX_DISTANCE_CM) + "cm");
+  Serial.println("Maximum reported distance: " + String(REPORT_MAX_DISTANCE_CM) + "cm");
   
   // Initialize LED
   pinMode(LED_PIN, OUTPUT);
@@ -44,18 +61,22 @@ void setup() {
   
   // Connect to Wi-Fi
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to WiFi");
   
   // Wait for Wi-Fi connection
   int wifiAttempts = 0;
   while (WiFi.status() != WL_CONNECTED && wifiAttempts < 30) {
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));  // Toggle LED
-    delay(300);
+    delay(500);
+    Serial.print(".");
     wifiAttempts++;
   }
   
   if (WiFi.status() == WL_CONNECTED) {
     isWifiConnected = true;
-    digitalWrite(LED_PIN, LOW);  // LED on when connected
+    Serial.println();
+    Serial.println("WiFi connected");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
     
     // Initialize NTP Client
     timeClient.begin();
@@ -69,12 +90,34 @@ void setup() {
     Firebase.begin(&config, &auth);
     Firebase.reconnectWiFi(true);
     
+    // Optimize for higher frequency uploads
+    firebaseData.setBSSLBufferSize(512, 2048);
+    firebaseData.setResponseSize(1024);
+    
     if (Firebase.ready()) {
       isFirebaseConnected = true;
+      Serial.println("Firebase connected successfully!");
       
-      // Log ESP8266 has started
-      logToFirebase("ESP8266 Water Level Monitor connected");
+      // Log ESP8266 has started with high-frequency configuration
+      logToFirebase("ESP8266 Water Level Monitor connected - High-Frequency Upload Mode");
+      
+      // Log threshold settings and maximum distance
+      String thresholdsMsg = "Thresholds set: Safe(0-" + String(SAFE_THRESHOLD_CM) + 
+                            "cm), Warning(" + String(SAFE_THRESHOLD_CM) + "-" + 
+                            String(WARNING_THRESHOLD_CM) + "cm), Critical(" + 
+                            String(WARNING_THRESHOLD_CM) + "-" + 
+                            String(CRITICAL_THRESHOLD_CM) + "cm)";
+      logToFirebase(thresholdsMsg);
+      
+      // Log max distance setting
+      logToFirebase("Using maximum distance of " + String(MAX_DISTANCE_CM) + "cm for calculations");
+      logToFirebase("Maximum reported distance capped at " + String(REPORT_MAX_DISTANCE_CM) + "cm");
+    } else {
+      Serial.println("Firebase connection failed!");
     }
+  } else {
+    Serial.println();
+    Serial.println("WiFi connection failed!");
   }
 }
 
@@ -84,113 +127,160 @@ void loop() {
     timeClient.update();
   }
   
-  // Read data from Arduino if available
-  if (Serial.available() > 0) {
+  // Process all available Serial data immediately for faster detection
+  while (Serial.available() > 0) {
     String data = Serial.readStringUntil('\n');
     
-    // Check if it's water level data (format: WATER:level:distance)
+    // Process data only if it's valid water level data
     if (data.startsWith("WATER:")) {
-      // Extract water level and raw distance values
-      int separatorPos = data.indexOf(':', 6);
+      int firstSeparator = data.indexOf(':', 6);
       
-      if (separatorPos > 0) {
-        // Parse water level (percentage)
-        int waterLevel = data.substring(6, separatorPos).toInt();
+      if (firstSeparator > 0) {
+        // Parse water level
+        String waterLevelString = data.substring(6, firstSeparator);
+        float waterLevelCM = 0;
         
-        // Parse raw distance (cm)
-        int rawDistance = data.substring(separatorPos + 1).toInt();
-        
-        // Determine status based on water level percentage
-        String status;
-        if (waterLevel >= 90) {
-          status = "Danger";  // Red light
-        } else if (waterLevel >= 60) {
-          status = "Warning";  // Yellow light
-        } else {
-          status = "Safe";  // Green light
+        if (waterLevelString != "--") {
+          waterLevelCM = waterLevelString.toFloat();
         }
-      
-        // Upload to Firebase if connected
+        
+        // Extract status from the data - after the second colon
+        int secondSeparator = data.indexOf(':', firstSeparator + 1);
+        String status = "";
+        
+        if (secondSeparator > 0) {
+          status = data.substring(secondSeparator + 1);
+        } else {
+          // Determine status based on water level in cm with updated thresholds
+          if (waterLevelCM <= SAFE_THRESHOLD_CM) {
+            status = "Safe";
+          } else if (waterLevelCM <= WARNING_THRESHOLD_CM) {
+            status = "Warning";
+          } else if (waterLevelCM <= CRITICAL_THRESHOLD_CM) {
+            status = "Critical";
+          } else {
+            // For levels above CRITICAL_THRESHOLD_CM
+            status = "Critical";
+          }
+        }
+        
+        // Convert to water level percentage - ensure we use MAX_DISTANCE_CM as the denominator
+        int waterLevelPercent = 0;
+        if (waterLevelCM > 0) {
+          waterLevelPercent = (waterLevelCM / MAX_DISTANCE_CM) * 100;
+          // Ensure it's capped at 100
+          if (waterLevelPercent > 100) waterLevelPercent = 100;
+        }
+        
+        // Cap the reported distance to REPORT_MAX_DISTANCE_CM for Firebase
+        float reportedWaterLevelCM = waterLevelCM;
+        if (reportedWaterLevelCM > REPORT_MAX_DISTANCE_CM) {
+          reportedWaterLevelCM = REPORT_MAX_DISTANCE_CM;
+        }
+        
+        // Upload to Firebase immediately if connected
         if (isWifiConnected && isFirebaseConnected) {
-          uploadWaterLevel(waterLevel, rawDistance, status);
+          // For testing and debugging, add this line to see the raw and percentage values
+          Serial.print("Raw CM: ");
+          Serial.print(waterLevelCM);
+          if (waterLevelCM != reportedWaterLevelCM) {
+            Serial.print("cm (capped to ");
+            Serial.print(reportedWaterLevelCM);
+            Serial.print("cm)");
+          } else {
+            Serial.print("cm");
+          }
+          Serial.print(" (");
+          Serial.print(waterLevelPercent);
+          Serial.print("%)");
+          Serial.println();
+          
+          uploadWaterLevel(waterLevelPercent, reportedWaterLevelCM, status);
+        } else {
+          Serial.println("Cannot upload - WiFi or Firebase not connected");
+          // Try to reconnect immediately if needed
+          checkAndReconnectWiFi();
         }
       }
     }
   }
   
-  // Check WiFi connection periodically
+  // Check WiFi connection periodically, but not too often
   static unsigned long lastWifiCheck = 0;
-  if (millis() - lastWifiCheck > 30000) {  // Check every 30 seconds
+  if (millis() - lastWifiCheck > 15000) {  // Check every 15 seconds
     lastWifiCheck = millis();
+    checkAndReconnectWiFi();
+  }
+}
+
+// Function to check and reconnect WiFi
+void checkAndReconnectWiFi() {
+  if (WiFi.status() != WL_CONNECTED) {
+    isWifiConnected = false;
+    Serial.println("WiFi disconnected! Attempting to reconnect...");
     
-    if (WiFi.status() != WL_CONNECTED) {
-      isWifiConnected = false;
-      digitalWrite(LED_PIN, HIGH);  // LED off when disconnected
+    // Try to reconnect
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    // Wait briefly for connection
+    int reconnectAttempts = 0;
+    while (WiFi.status() != WL_CONNECTED && reconnectAttempts < 10) {
+      delay(500);
+      Serial.print(".");
+      reconnectAttempts++;
+    }
+    Serial.println();
+    
+    if (WiFi.status() == WL_CONNECTED) {
+      isWifiConnected = true;
+      Serial.println("WiFi reconnected successfully");
       
-      // Try to reconnect
-      WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-      
-      // Wait briefly for connection
-      delay(5000);
-      
-      if (WiFi.status() == WL_CONNECTED) {
-        isWifiConnected = true;
-        digitalWrite(LED_PIN, LOW);  // LED on when connected
-        
-        // Update time after reconnecting
-        timeClient.update();
-      }
+      // Update time after reconnecting
+      timeClient.update();
+    } else {
+      Serial.println("WiFi reconnection failed");
     }
   }
 }
 
 // Upload water level data to Firebase
-void uploadWaterLevel(int waterLevel, int rawDistance, String status) {
+void uploadWaterLevel(int waterLevelPercent, float waterLevelCM, String status) {
   // Get the current timestamp from NTP
   unsigned long timestamp = (unsigned long)timeClient.getEpochTime() * 1000L; // Convert to milliseconds
   
-  // Blink LED to indicate upload attempt
-  digitalWrite(LED_PIN, HIGH);  // LED off
-  
-  // Upload to Firebase
-  bool success = true;
+  // Calculate time since last successful upload for debug info
+  unsigned long timeSinceLastUpload = timestamp - lastSuccessfulUpload;
   
   // Create a unique entry path using timestamp
   String path = "/waterLevelData/" + String(timestamp);
   
-  // Upload each field separately
-  success &= Firebase.setInt(firebaseData, path + "/waterLevel", waterLevel);
-  success &= Firebase.setInt(firebaseData, path + "/distance", rawDistance);
-  success &= Firebase.setString(firebaseData, path + "/status", status);
-  success &= Firebase.setString(firebaseData, path + "/deviceId", deviceId);
-  success &= Firebase.setInt(firebaseData, path + "/timestamp", timestamp);
+  // Upload to Firebase with optimized approach - set multiple data at once
+  bool success = true;
   
-  // Also update current water level (most recent reading)
-  success &= Firebase.setInt(firebaseData, "/currentWaterLevel/waterLevel", waterLevel);
-  success &= Firebase.setInt(firebaseData, "/currentWaterLevel/distance", rawDistance);
-  success &= Firebase.setString(firebaseData, "/currentWaterLevel/status", status);
-  success &= Firebase.setInt(firebaseData, "/currentWaterLevel/timestamp", timestamp);
+  // Create JSON object with multiple fields to reduce number of HTTP requests
+  FirebaseJson json;
+  json.set("waterLevel", waterLevelPercent);
+  json.set("distance", waterLevelCM);
+  json.set("status", status);
+  json.set("deviceId", deviceId);
+  json.set("timestamp", timestamp);
   
-  if (success) {
-    // LED quick blink pattern for success
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_PIN, LOW);  // LED on
-      delay(50);
-      digitalWrite(LED_PIN, HIGH);  // LED off
-      delay(50);
-    }
+  // Upload the entire JSON object in one request
+  if (Firebase.setJSON(firebaseData, path, json)) {
+    Serial.print("Upload successful: ");
+    Serial.print(waterLevelCM);
+    Serial.print("cm, Status: ");
+    Serial.println(status);
+    
+    // Also update current water level (most recent reading)
+    Firebase.setJSON(firebaseData, "/currentWaterLevel", json);
+    
+    // Update last successful upload time
+    lastSuccessfulUpload = timestamp;
   } else {
-    // LED slow blink pattern for failure
-    for (int i = 0; i < 2; i++) {
-      digitalWrite(LED_PIN, LOW);  // LED on
-      delay(200);
-      digitalWrite(LED_PIN, HIGH);  // LED off
-      delay(200);
-    }
+    Serial.print("Upload failed: ");
+    Serial.println(firebaseData.errorReason());
   }
-  
-  // LED back on to indicate ready state
-  digitalWrite(LED_PIN, LOW);  // LED on
 }
 
 // Log a message to Firebase
@@ -200,7 +290,11 @@ void logToFirebase(String message) {
   }
   
   unsigned long timestamp = timeClient.getEpochTime() * 1000; // Convert to milliseconds
+  
+  FirebaseJson json;
+  json.set("message", message);
+  json.set("timestamp", timestamp);
+  
   String path = "/systemLogs/" + String(timestamp);
-  Firebase.setString(firebaseData, path + "/message", message);
-  Firebase.setInt(firebaseData, path + "/timestamp", timestamp);
+  Firebase.setJSON(firebaseData, path, json);
 } 
