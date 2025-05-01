@@ -13,9 +13,9 @@
 #define WIFI_SSID "macky"
 #define WIFI_PASSWORD "Macky12345678."
 
-// Firebase credentials
-#define FIREBASE_HOST "water-level-monitoring-new-default-rtdb.firebaseio.com"
-#define FIREBASE_AUTH "AIzaSyC-rk_aYFLqEdO7znZFELh4-t0c0bYa35Q"
+// Firebase credentials - Updated to new database
+#define FIREBASE_HOST "water-level-3-default-rtdb.firebaseio.com"
+#define FIREBASE_AUTH "AIzaSyCn78CVEM5Q26Bi-8kFTWyHNqMRQlS9m7I"
 
 // Water level thresholds in cm
 #define SAFE_THRESHOLD_CM 3.0
@@ -97,9 +97,10 @@ void setup() {
     if (Firebase.ready()) {
       isFirebaseConnected = true;
       Serial.println("Firebase connected successfully!");
+      digitalWrite(LED_PIN, LOW);  // Turn on LED to indicate successful connection
       
       // Log ESP8266 has started with high-frequency configuration
-      logToFirebase("ESP8266 Water Level Monitor connected - High-Frequency Upload Mode");
+      logToFirebase("ESP8266 Water Level Monitor connected to new database - High-Frequency Upload Mode");
       
       // Log threshold settings and maximum distance
       String thresholdsMsg = "Thresholds set: Safe(0-" + String(SAFE_THRESHOLD_CM) + 
@@ -114,10 +115,24 @@ void setup() {
       logToFirebase("Maximum reported distance capped at " + String(REPORT_MAX_DISTANCE_CM) + "cm");
     } else {
       Serial.println("Firebase connection failed!");
+      // Blink LED to indicate connection failure
+      for (int i = 0; i < 5; i++) {
+        digitalWrite(LED_PIN, LOW);
+        delay(100);
+        digitalWrite(LED_PIN, HIGH);
+        delay(100);
+      }
     }
   } else {
     Serial.println();
     Serial.println("WiFi connection failed!");
+    // Blink LED rapidly to indicate WiFi failure
+    for (int i = 0; i < 10; i++) {
+      digitalWrite(LED_PIN, LOW);
+      delay(50);
+      digitalWrite(LED_PIN, HIGH);
+      delay(50);
+    }
   }
 }
 
@@ -130,47 +145,50 @@ void loop() {
   // Process all available Serial data immediately for faster detection
   while (Serial.available() > 0) {
     String data = Serial.readStringUntil('\n');
+    data.trim(); // Remove any whitespace or newline characters
     
     // Process data only if it's valid water level data
-    if (data.startsWith("WATER:")) {
-      int firstSeparator = data.indexOf(':', 6);
+    // Accept both the WATER: format from ESP8266 and the Distance: format from Arduino
+    if (data.startsWith("WATER:") || data.startsWith("Distance:")) {
+      float waterLevelCM = 0;
       
-      if (firstSeparator > 0) {
-        // Parse water level
-        String waterLevelString = data.substring(6, firstSeparator);
-        float waterLevelCM = 0;
+      if (data.startsWith("WATER:")) {
+        int firstSeparator = data.indexOf(':', 6);
         
-        if (waterLevelString != "--") {
-          waterLevelCM = waterLevelString.toFloat();
-        }
-        
-        // Extract status from the data - after the second colon
-        int secondSeparator = data.indexOf(':', firstSeparator + 1);
-        String status = "";
-        
-        if (secondSeparator > 0) {
-          status = data.substring(secondSeparator + 1);
-        } else {
-          // Determine status based on water level in cm with updated thresholds
-          if (waterLevelCM <= SAFE_THRESHOLD_CM) {
-            status = "Safe";
-          } else if (waterLevelCM <= WARNING_THRESHOLD_CM) {
-            status = "Warning";
-          } else if (waterLevelCM <= CRITICAL_THRESHOLD_CM) {
-            status = "Critical";
-          } else {
-            // For levels above CRITICAL_THRESHOLD_CM
-            status = "Critical";
+        if (firstSeparator > 0) {
+          // Parse water level
+          String waterLevelString = data.substring(6, firstSeparator);
+          
+          if (waterLevelString != "--") {
+            waterLevelCM = waterLevelString.toFloat();
           }
+        }
+      } else if (data.startsWith("Distance:")) {
+        // Extract the distance value from Arduino's "Distance: X cm" format
+        int startPos = data.indexOf(':') + 1;
+        int endPos = data.indexOf("cm");
+        if (endPos > startPos) {
+          String distanceStr = data.substring(startPos, endPos);
+          distanceStr.trim();
+          waterLevelCM = distanceStr.toFloat();
+        }
+      }
+      
+      if (waterLevelCM > 0) {
+        // Determine status based on water level in cm with updated thresholds
+        String status;
+        if (waterLevelCM <= SAFE_THRESHOLD_CM) {
+          status = "Safe";
+        } else if (waterLevelCM <= WARNING_THRESHOLD_CM) {
+          status = "Warning";
+        } else {
+          status = "Critical";
         }
         
         // Convert to water level percentage - ensure we use MAX_DISTANCE_CM as the denominator
-        int waterLevelPercent = 0;
-        if (waterLevelCM > 0) {
-          waterLevelPercent = (waterLevelCM / MAX_DISTANCE_CM) * 100;
-          // Ensure it's capped at 100
-          if (waterLevelPercent > 100) waterLevelPercent = 100;
-        }
+        int waterLevelPercent = (waterLevelCM / MAX_DISTANCE_CM) * 100;
+        // Ensure it's capped at 100
+        if (waterLevelPercent > 100) waterLevelPercent = 100;
         
         // Cap the reported distance to REPORT_MAX_DISTANCE_CM for Firebase
         float reportedWaterLevelCM = waterLevelCM;
@@ -193,9 +211,13 @@ void loop() {
           Serial.print(" (");
           Serial.print(waterLevelPercent);
           Serial.print("%)");
-          Serial.println();
+          Serial.print(" Status: ");
+          Serial.println(status);
           
+          // Visual indicator of data being sent
+          digitalWrite(LED_PIN, HIGH); // LED off briefly
           uploadWaterLevel(waterLevelPercent, reportedWaterLevelCM, status);
+          digitalWrite(LED_PIN, LOW);  // LED back on
         } else {
           Serial.println("Cannot upload - WiFi or Firebase not connected");
           // Try to reconnect immediately if needed
@@ -218,6 +240,7 @@ void checkAndReconnectWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     isWifiConnected = false;
     Serial.println("WiFi disconnected! Attempting to reconnect...");
+    digitalWrite(LED_PIN, HIGH); // Turn off LED to indicate disconnection
     
     // Try to reconnect
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -234,6 +257,7 @@ void checkAndReconnectWiFi() {
     if (WiFi.status() == WL_CONNECTED) {
       isWifiConnected = true;
       Serial.println("WiFi reconnected successfully");
+      digitalWrite(LED_PIN, LOW); // Turn on LED to indicate connection
       
       // Update time after reconnecting
       timeClient.update();
@@ -253,9 +277,6 @@ void uploadWaterLevel(int waterLevelPercent, float waterLevelCM, String status) 
   
   // Create a unique entry path using timestamp
   String path = "/waterLevelData/" + String(timestamp);
-  
-  // Upload to Firebase with optimized approach - set multiple data at once
-  bool success = true;
   
   // Create JSON object with multiple fields to reduce number of HTTP requests
   FirebaseJson json;
